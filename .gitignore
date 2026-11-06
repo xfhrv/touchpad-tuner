@@ -1,0 +1,10 @@
+# Build output (the prebuilt launcher is distributed via GitHub Releases)
+TouchpadTuner.exe
+*.zip
+
+# Windows / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
+*.log
+.vscode/
