@@ -11,6 +11,8 @@
 #  - 不使用驱动、不需要管理员权限
 # =====================================================================
 
+param([switch]$Background)
+
 $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName PresentationFramework
@@ -179,6 +181,25 @@ public static class TouchpadApi
 
 [TouchpadApi]::TryEnableDpiAwareness()
 
+# 三指拖曳引擎（可选组件；缺少 DLL 时功能自动禁用，不影响调速功能）
+$script:tfdReady = $false
+$script:tfdLoadError = ''
+try {
+    $helperDll = Join-Path $PSScriptRoot 'TouchpadTuner.Helper.dll'
+    $helperSrc = Join-Path $PSScriptRoot 'src\ThreeFingerDrag.cs'
+    if (Test-Path $helperDll) {
+        Add-Type -Path $helperDll
+        $script:tfdReady = $true
+    } elseif (Test-Path $helperSrc) {
+        Add-Type -Path $helperSrc
+        $script:tfdReady = $true
+    } else {
+        $script:tfdLoadError = '未找到 TouchpadTuner.Helper.dll'
+    }
+} catch {
+    $script:tfdLoadError = $_.Exception.Message
+}
+
 # ---------------------------------------------------------------------
 # 单实例控制：若已有窗口，则把旧窗口带到前台后退出
 # ---------------------------------------------------------------------
@@ -188,9 +209,16 @@ try { $script:firstInstance = $script:mutex.WaitOne(0) }
 catch [System.Threading.AbandonedMutexException] { $script:firstInstance = $true }
 
 if (-not $script:firstInstance) {
-    [void][TouchpadApi]::ActivateWindow('触摸板调速器')
+    try {
+        $showEvent = [System.Threading.EventWaitHandle]::OpenExisting('Local\TouchpadTunerShowWindow')
+        [void]$showEvent.Set()
+        $showEvent.Dispose()
+    } catch {
+        [void][TouchpadApi]::ActivateWindow('触摸板调速器')
+    }
     exit
 }
+$script:showWindowEvent = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, 'Local\TouchpadTunerShowWindow')
 
 # ---------------------------------------------------------------------
 # 系统档位 <-> 倍率
@@ -238,7 +266,7 @@ $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="触摸板调速器"
-        Width="600" Height="540"
+        Width="600" Height="780"
         ResizeMode="CanMinimize"
         WindowStartupLocation="CenterScreen"
         Background="#F4F6F9"
@@ -319,10 +347,30 @@ $xaml = @'
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="SwitchStyle" TargetType="CheckBox">
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <Border x:Name="Track" Width="46" Height="24" CornerRadius="12" Background="#D1D5DB">
+              <Ellipse x:Name="Knob" Width="18" Height="18" Fill="White" HorizontalAlignment="Left" Margin="3,0,0,0"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Track" Property="Background" Value="#2F6FED"/>
+                <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
+                <Setter TargetName="Knob" Property="Margin" Value="0,0,3,0"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
 
   <Grid Margin="28,22,28,20">
     <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
@@ -379,8 +427,44 @@ $xaml = @'
       </StackPanel>
     </Border>
 
+    <!-- 三指拖曳 -->
+    <Border Grid.Row="2" Margin="0,14,0,0" CornerRadius="14"
+            Background="White" BorderBrush="#E5E7EB" BorderThickness="1" Padding="24,16,24,16">
+      <StackPanel>
+        <Grid>
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock Text="三指拖曳" FontSize="14" FontWeight="SemiBold" Foreground="#111827" VerticalAlignment="Center"/>
+            <TextBlock Text="macOS 风格：三指按住并移动，即可拖动窗口 / 选中文字"
+                       FontSize="11" Foreground="#9CA3AF" Margin="12,0,0,0" VerticalAlignment="Center"/>
+          </StackPanel>
+          <CheckBox x:Name="ChkThreeFinger" Style="{StaticResource SwitchStyle}" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        <Grid Margin="0,10,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" Text="拖曳速度" FontSize="12" Foreground="#6B7280"
+                     VerticalAlignment="Center" Margin="0,0,12,0"/>
+          <Slider x:Name="SldDragSens" Grid.Column="1" Minimum="40" Maximum="200" Value="100"
+                  VerticalAlignment="Center" Height="26" Margin="0,0,12,0"/>
+          <TextBlock x:Name="TxtDragSens" Grid.Column="2" Text="1.0×" FontSize="12" Foreground="#111827"
+                     VerticalAlignment="Center" MinWidth="44" TextAlignment="Right"/>
+        </Grid>
+        <TextBlock x:Name="TxtTfdStatus" Margin="0,8,0,0" Text="三指拖曳已关闭"
+                   FontSize="11" Foreground="#9CA3AF" TextWrapping="Wrap"/>
+        <Button x:Name="BtnMigrateGestures" Margin="0,6,0,0"
+                Content="一键把 Windows 三指手势迁移到四指（三指→无，四指→切换应用并显示桌面）"
+                Style="{StaticResource LinkButton}" HorizontalAlignment="Left"/>
+        <CheckBox x:Name="ChkAutoStart" Margin="0,8,0,0"
+                  Content="开机自动启动（后台运行，三指拖曳随时可用）"
+                  FontSize="11" Foreground="#6B7280"/>
+      </StackPanel>
+    </Border>
+
     <!-- 输入行 -->
-    <Grid Grid.Row="2" Margin="0,16,0,0">
+    <Grid Grid.Row="3" Margin="0,16,0,0">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="Auto"/>
@@ -402,11 +486,11 @@ $xaml = @'
     </Grid>
 
     <!-- 状态 -->
-    <TextBlock x:Name="TxtStatus" Grid.Row="3" Text="" FontSize="12.5" Foreground="#16A34A"
+    <TextBlock x:Name="TxtStatus" Grid.Row="4" Text="" FontSize="12.5" Foreground="#16A34A"
                Margin="2,14,0,0" TextWrapping="Wrap"/>
 
     <!-- 底部信息 -->
-    <Grid Grid.Row="5" Margin="2,0,2,0">
+    <Grid Grid.Row="6" Margin="2,0,2,0">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
@@ -418,14 +502,15 @@ $xaml = @'
     </Grid>
 
     <!-- 底部按钮 -->
-    <Grid Grid.Row="6" Margin="0,12,0,0">
+    <Grid Grid.Row="7" Margin="0,12,0,0">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
       <Button x:Name="BtnSettings" Grid.Column="0" Content="打开 Windows 触摸板设置"
               Style="{StaticResource LinkButton}" HorizontalAlignment="Left" VerticalAlignment="Center"/>
-      <Button x:Name="BtnClose" Grid.Column="1" Content="关闭"
+      <Button x:Name="BtnClose" Grid.Column="1" Content="隐藏到托盘"
+              ToolTip="关闭窗口后程序仍在后台运行，三指拖曳可继续使用。右键托盘图标可退出。"
               Style="{StaticResource SecondaryButton}" Height="36" MinWidth="88" VerticalAlignment="Center"/>
     </Grid>
   </Grid>
@@ -450,6 +535,12 @@ $script:TickCanvas    = $script:window.FindName('TickCanvas')
 $script:BtnReset    = $script:window.FindName('BtnReset')
 $script:BtnSettings = $script:window.FindName('BtnSettings')
 $script:BtnClose    = $script:window.FindName('BtnClose')
+$script:ChkThreeFinger = $script:window.FindName('ChkThreeFinger')
+$script:SldDragSens    = $script:window.FindName('SldDragSens')
+$script:TxtDragSens    = $script:window.FindName('TxtDragSens')
+$script:TxtTfdStatus   = $script:window.FindName('TxtTfdStatus')
+$script:BtnMigrateGestures = $script:window.FindName('BtnMigrateGestures')
+$script:ChkAutoStart = $script:window.FindName('ChkAutoStart')
 
 # 图标
 try {
@@ -482,6 +573,11 @@ $script:apiReady = $false
 $script:dragging = $false
 $script:pendingMultiplier = $null
 $script:closing = $false
+$script:exiting = $false
+$script:exitInProgress = $false
+$script:suppressAutoStartEvent = $false
+$script:notifyIcon = $null
+$script:trayTfdItem = $null
 
 $script:applyTimer = New-Object System.Windows.Threading.DispatcherTimer
 $script:applyTimer.Interval = [TimeSpan]::FromMilliseconds(140)
@@ -489,6 +585,8 @@ $script:syncTimer = New-Object System.Windows.Threading.DispatcherTimer
 $script:syncTimer.Interval = [TimeSpan]::FromSeconds(1.2)
 $script:hintTimer = New-Object System.Windows.Threading.DispatcherTimer
 $script:hintTimer.Interval = [TimeSpan]::FromMilliseconds(2200)
+$script:tfdTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:tfdTimer.Interval = [TimeSpan]::FromMilliseconds(300)
 
 function Set-Status([string]$text, [bool]$success) {
     $script:TxtStatus.Text = $text
@@ -506,6 +604,335 @@ function Update-MouseLabel {
     } else {
         $script:TxtMouse.Text = "鼠标指针速度：未知"
     }
+}
+
+# ---------------------------------------------------------------------
+# 三指拖曳
+# ---------------------------------------------------------------------
+$script:settingsKey = 'HKCU:\Software\TouchpadTuner'
+
+function Get-AppSetting([string]$name, [int]$default) {
+    try {
+        $item = Get-ItemProperty -Path $script:settingsKey -Name $name -ErrorAction Stop
+        return [int]$item.$name
+    } catch {
+        return $default
+    }
+}
+
+function Set-AppSetting([string]$name, [int]$value) {
+    try {
+        if (-not (Test-Path $script:settingsKey)) {
+            New-Item -Path $script:settingsKey -Force | Out-Null
+        }
+        New-ItemProperty -Path $script:settingsKey -Name $name -Value $value -PropertyType DWord -Force | Out-Null
+    } catch { }
+}
+
+function Set-TfdStatusText([string]$message, [int]$kind) {
+    $script:TxtTfdStatus.Text = $message
+    $color = [System.Windows.Media.Color]::FromRgb(156, 163, 175)
+    if ($kind -eq 1) { $color = [System.Windows.Media.Color]::FromRgb(22, 163, 74) }
+    elseif ($kind -eq 2) { $color = [System.Windows.Media.Color]::FromRgb(220, 38, 38) }
+    elseif ($kind -eq 3) { $color = [System.Windows.Media.Color]::FromRgb(47, 111, 237) }
+    $script:TxtTfdStatus.Foreground = New-Object System.Windows.Media.SolidColorBrush($color)
+}
+
+function Update-TfdStatus {
+    if ($script:tfdMessageOverride -and (Get-Date) -lt $script:tfdMessageUntil) {
+        Set-TfdStatusText $script:tfdMessageOverride $script:tfdMessageOverrideKind
+        return
+    }
+    if (-not $script:tfdReady) {
+        Set-TfdStatusText ("三指拖曳不可用：" + $script:tfdLoadError) 2
+        return
+    }
+    $engine = [TouchpadTuner.Helper.ThreeFingerDragEngine]
+    if (-not $engine::IsRunning) {
+        Set-TfdStatusText ("三指拖曳引擎未运行：" + $engine::Error) 2
+        return
+    }
+    if (-not $engine::Enabled) {
+        if ((Get-AppSetting 'GestureMigrated' 0) -eq 1) {
+            Set-TfdStatusText "已关闭 · 打开开关即可使用三指拖曳（macOS 风格）" 0
+        } else {
+            Set-TfdStatusText "已关闭 · 打开开关即可使用三指拖曳；首次使用请先点下方「一键把 Windows 三指手势迁移到四指」" 0
+        }
+        return
+    }
+    $contacts = $engine::ContactCount
+    if ($engine::IsDragging) {
+        Set-TfdStatusText ("拖曳中：左键已按下，移动三指即可拖动（检测到 " + $contacts + " 指）") 2
+    } elseif ($contacts -ge 3) {
+        Set-TfdStatusText ("检测到 " + $contacts + " 指，请移动三指开始拖曳") 3
+    } else {
+        Set-TfdStatusText ("已开启 · 三指按住并移动即可拖动窗口/选中文字（检测到 " + $contacts + " 指）") 1
+    }
+    if (-not $engine::TouchpadFound) {
+        Set-TfdStatusText "已开启，但暂未找到精密触摸板设备" 2
+    }
+}
+
+function Set-TfdEnabled([bool]$enabled) {
+    if (-not $script:tfdReady) { return }
+    $engine = [TouchpadTuner.Helper.ThreeFingerDragEngine]
+    if ($enabled) {
+        if (-not $engine::IsRunning) {
+            $started = $engine::Start()
+            if (-not $started) {
+                $script:ChkThreeFinger.IsChecked = $false
+                Set-TfdStatusText ("三指拖曳启动失败：" + $engine::Error) 2
+                return
+            }
+        }
+        $engine::Sensitivity = $script:SldDragSens.Value / 100.0
+        $engine::Enabled = $true
+        Set-AppSetting 'ThreeFingerDragEnabled' 1
+    } else {
+        $engine::Enabled = $false
+        Set-AppSetting 'ThreeFingerDragEnabled' 0
+    }
+    Update-TfdStatus
+}
+
+$script:tfdMessageOverride = $null
+$script:tfdMessageUntil = [DateTime]::MinValue
+
+function Show-TfdMessage([string]$message, [int]$kind, [int]$seconds) {
+    $script:tfdMessageOverride = $message
+    $script:tfdMessageOverrideKind = $kind
+    $script:tfdMessageUntil = (Get-Date).AddSeconds($seconds)
+    Set-TfdStatusText $message $kind
+}
+
+# ---- Windows 设置手势自动化（UI Automation）----
+function Get-SettingsWindowElement {
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $kids = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+    foreach ($k in $kids) {
+        try {
+            if ($k.Current.ClassName -eq 'ApplicationFrameWindow' -and ($k.Current.Name -eq '设置' -or $k.Current.Name -eq 'Settings')) {
+                return $k
+            }
+        } catch { }
+    }
+    return $null
+}
+
+function Wait-SettingsWindow([int]$timeoutSeconds) {
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $w = Get-SettingsWindowElement
+        if ($w) { return $w }
+        Start-Sleep -Milliseconds 400
+    }
+    return $null
+}
+
+function Ensure-GestureSectionExpanded($win, [string]$groupName) {
+    $nameCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $groupName)
+    $groups = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $nameCond)
+    $group = $null
+    foreach ($g in $groups) {
+        if ($g.Current.ControlType.ProgrammaticName -eq 'ControlType.Group') { $group = $g; break }
+    }
+    if (-not $group) { throw ("未找到设置分组：" + $groupName) }
+    try {
+        $scroll = $group.GetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern)
+        $scroll.ScrollIntoView()
+        Start-Sleep -Milliseconds 200
+    } catch { }
+    $gr = $group.Current.BoundingRectangle
+    $btnCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    $btns = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)
+    foreach ($b in $btns) {
+        try {
+            $r = $b.Current.BoundingRectangle
+            if ($r.Y -ge ($gr.Y - 12) -and $r.Y -le ($gr.Y + $gr.Height + 12) -and $r.X -gt ($gr.X + $gr.Width - 100)) {
+                $ec = $b.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                if ($ec -and $ec.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Expanded) {
+                    $ec.Expand()
+                    Start-Sleep -Milliseconds 700
+                }
+                return
+            }
+        } catch { }
+    }
+    throw ("未找到设置分组的展开按钮：" + $groupName)
+}
+
+function Find-ComboById($win, [string]$automationId) {
+    $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $automationId)
+    return $win.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+}
+
+function Get-ComboSelectionText($combo) {
+    try {
+        $sp = $combo.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern)
+        $names = @()
+        foreach ($s in $sp.Current.GetSelection()) { if ($s.Current.Name) { $names += $s.Current.Name } }
+        return ($names -join ',')
+    } catch { return '' }
+}
+
+function Select-ComboItem($combo, [string[]]$nameKeywords) {
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $ec = $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    if ($ec.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Expanded) {
+        $ec.Expand()
+        Start-Sleep -Milliseconds 700
+    }
+    $itemCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)
+    $items = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $itemCond)
+    $target = $null
+    foreach ($it in $items) {
+        try {
+            $n = $it.Current.Name
+            if (-not $n) { continue }
+            foreach ($kw in $nameKeywords) {
+                if ($n -like ('*' + $kw + '*')) { $target = $it; break }
+            }
+            if ($target) { break }
+        } catch { }
+    }
+    if (-not $target) {
+        try { $ec.Collapse() } catch { }
+        throw ("下拉选项未找到：" + ($nameKeywords -join ' / '))
+    }
+    $si = $target.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+    $si.Select()
+    Start-Sleep -Milliseconds 700
+    try { $ec.Collapse() } catch { }
+}
+
+function Invoke-GestureMigration {
+    Show-TfdMessage "正在打开 Windows 设置并迁移手势，请稍候…" 3 20
+    try {
+        Add-Type -AssemblyName UIAutomationClient
+        Add-Type -AssemblyName UIAutomationTypes
+        Start-Process 'ms-settings:devices-touchpad' | Out-Null
+        $win = Wait-SettingsWindow 15
+        if (-not $win) { throw "无法打开 Windows 设置窗口，请手动打开：设置 → 蓝牙和其他设备 → 触摸板" }
+        Start-Sleep -Milliseconds 800
+        Ensure-GestureSectionExpanded $win "三指手势"
+        Ensure-GestureSectionExpanded $win "四指手势"
+        Start-Sleep -Milliseconds 500
+
+        $threeId = 'SystemSettings_Input_Touch_ThreeFingerSlideEnabled_ComboBox'
+        $fourId = 'SystemSettings_Input_Touch_FourFingerSlideEnabled_ComboBox'
+        $three = Find-ComboById $win $threeId
+        $four = Find-ComboById $win $fourId
+        if (-not $three -or -not $four) {
+            throw "未找到三指/四指手势下拉框（Windows 版本或语言可能不兼容）"
+        }
+        Select-ComboItem $three @('无', 'Nothing')
+        Select-ComboItem $four @('切换应用', 'Switch apps')
+        Start-Sleep -Milliseconds 600
+
+        $threeNow = Get-ComboSelectionText $three
+        $fourNow = Get-ComboSelectionText $four
+        if ($threeNow -like '*无*' -and $fourNow -like '*切换应用*') {
+            Set-AppSetting 'GestureMigrated' 1
+            Show-TfdMessage ("✓ 已设置：三指手势 = 无；四指手势 = " + $fourNow + "（四指左右切换应用、四指上任务视图、四指下显示桌面）") 1 12
+        } else {
+            throw ("设置未生效（三指：" + $threeNow + "，四指：" + $fourNow + "）")
+        }
+    } catch {
+        $msg = "手势迁移失败：" + $_.Exception.Message + "。也可以手动设置：三指手势 → 无；四指手势 → 切换应用并显示桌面。"
+        Show-TfdMessage $msg 2 20
+    }
+}
+
+# ---------------------------------------------------------------------
+# 托盘 / 后台运行 / 开机启动
+# ---------------------------------------------------------------------
+function Show-MainWindow {
+    if (-not $script:window) { return }
+    try {
+        $script:window.ShowInTaskbar = $true
+        $script:window.Show()
+        $script:window.WindowState = [System.Windows.WindowState]::Normal
+        $script:window.Activate()
+        $script:window.Topmost = $true
+        $script:window.Topmost = $false
+    } catch { }
+}
+
+function Test-AutoStart {
+    try {
+        Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'TouchpadTuner' -ErrorAction Stop | Out-Null
+        return $true
+    } catch { return $false }
+}
+
+function Set-AutoStart([bool]$enable) {
+    try {
+        $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+        if ($enable) {
+            $exe = Join-Path $PSScriptRoot 'TouchpadTuner.exe'
+            New-ItemProperty -Path $runKey -Name 'TouchpadTuner' -Value ('"' + $exe + '" -Background') -PropertyType String -Force | Out-Null
+        } else {
+            Remove-ItemProperty -Path $runKey -Name 'TouchpadTuner' -ErrorAction SilentlyContinue
+        }
+    } catch { }
+}
+
+function Exit-Application {
+    if ($script:exitInProgress) { return }
+    $script:exitInProgress = $true
+    $script:exiting = $true
+    $script:closing = $true
+    try { $script:applyTimer.Stop() } catch { }
+    try { $script:syncTimer.Stop() } catch { }
+    try { $script:hintTimer.Stop() } catch { }
+    try { $script:tfdTimer.Stop() } catch { }
+    if ($script:tfdReady) {
+        try {
+            [TouchpadTuner.Helper.ThreeFingerDragEngine]::Enabled = $false
+            [TouchpadTuner.Helper.ThreeFingerDragEngine]::Stop()
+        } catch { }
+    }
+    if ($script:notifyIcon) {
+        try { $script:notifyIcon.Visible = $false; $script:notifyIcon.Dispose() } catch { }
+        $script:notifyIcon = $null
+    }
+    try { $script:mutex.ReleaseMutex() } catch { }
+    try { [System.Windows.Threading.Dispatcher]::CurrentDispatcher.InvokeShutdown() } catch { }
+}
+
+function Initialize-TrayIcon {
+    $ni = New-Object System.Windows.Forms.NotifyIcon
+    try {
+        $iconPath = Join-Path $PSScriptRoot 'app.ico'
+        if (Test-Path $iconPath) { $ni.Icon = New-Object System.Drawing.Icon($iconPath) }
+        else { $ni.Icon = [System.Drawing.SystemIcons]::Application }
+    } catch { $ni.Icon = [System.Drawing.SystemIcons]::Application }
+    $ni.Text = '触摸板调速器'
+    $ni.Visible = $true
+
+    $menu = New-Object System.Windows.Forms.ContextMenuStrip
+    $itemOpen = New-Object System.Windows.Forms.ToolStripMenuItem('打开触摸板调速器')
+    $itemOpen.Add_Click({ Show-MainWindow })
+    [void]$menu.Items.Add($itemOpen)
+
+    $itemTfd = New-Object System.Windows.Forms.ToolStripMenuItem('三指拖曳')
+    $script:trayTfdItem = $itemTfd
+    $itemTfd.Add_Click({
+        if ($script:tfdReady) {
+            $script:ChkThreeFinger.IsChecked = -not [TouchpadTuner.Helper.ThreeFingerDragEngine]::Enabled
+        }
+    })
+    [void]$menu.Items.Add($itemTfd)
+    [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+
+    $itemExit = New-Object System.Windows.Forms.ToolStripMenuItem('退出')
+    $itemExit.Add_Click({ Exit-Application })
+    [void]$menu.Items.Add($itemExit)
+
+    $ni.ContextMenuStrip = $menu
+    $ni.Add_DoubleClick({ Show-MainWindow })
+    $script:notifyIcon = $ni
+    try { $script:notifyIcon.Visible = $true } catch { }
 }
 
 function Update-SliderVisual([double]$mult) {
@@ -626,6 +1053,22 @@ $script:hintTimer.Add_Tick({
     $script:TxtMode.Text = [TouchpadApi]::ModeName
 })
 
+$script:tfdTimer.Add_Tick({
+    if ($script:showWindowEvent) {
+        try { if ($script:showWindowEvent.WaitOne(0)) { Show-MainWindow } } catch { }
+    }
+    if ($script:trayTfdItem) {
+        try { $script:trayTfdItem.Checked = ($script:ChkThreeFinger.IsChecked -eq $true) } catch { }
+    }
+    if ($script:notifyIcon) {
+        try {
+            if ($script:ChkThreeFinger.IsChecked -eq $true) { $script:notifyIcon.Text = '触摸板调速器 · 三指拖曳已开启' }
+            else { $script:notifyIcon.Text = '触摸板调速器 · 三指拖曳已关闭' }
+        } catch { }
+    }
+    Update-TfdStatus
+})
+
 $script:window.Add_SizeChanged({
     if ($script:currentNative -ge 1) {
         Update-SliderVisual $script:Multipliers[$script:currentNative - 1]
@@ -716,18 +1159,58 @@ $script:BtnClose.Add_Click({
     $script:window.Close()
 })
 
+$script:ChkThreeFinger.Add_Checked({
+    Set-TfdEnabled $true
+})
+
+$script:ChkThreeFinger.Add_Unchecked({
+    Set-TfdEnabled $false
+})
+
+$script:BtnMigrateGestures.Add_Click({
+    Invoke-GestureMigration
+})
+
+$script:SldDragSens.Add_ValueChanged({
+    $value = [Math]::Round($script:SldDragSens.Value) / 100.0
+    $script:TxtDragSens.Text = $value.ToString('0.0', [System.Globalization.CultureInfo]::InvariantCulture) + '×'
+    if ($script:tfdReady) {
+        [TouchpadTuner.Helper.ThreeFingerDragEngine]::Sensitivity = $value
+    }
+    Set-AppSetting 'ThreeFingerDragSensitivity' ([int][Math]::Round($script:SldDragSens.Value))
+})
+
+$script:ChkAutoStart.Add_Checked({
+    if (-not $script:suppressAutoStartEvent) { Set-AutoStart $true }
+})
+
+$script:ChkAutoStart.Add_Unchecked({
+    if (-not $script:suppressAutoStartEvent) { Set-AutoStart $false }
+})
+
 $script:window.Add_KeyDown({
     if ($args[1].Key -eq [System.Windows.Input.Key]::Escape) {
         $script:window.Close()
     }
 })
 
+$script:window.Add_Closing({
+    param($sender, $e)
+    if (-not $script:exiting) {
+        $e.Cancel = $true
+        $script:window.Hide()
+        if ($script:notifyIcon) {
+            try {
+                $script:notifyIcon.ShowBalloonTip(2500, '触摸板调速器',
+                    '程序仍在后台运行，三指拖曳可继续使用。双击托盘图标可重新打开窗口。',
+                    [System.Windows.Forms.ToolTipIcon]::Info)
+            } catch { }
+        }
+    }
+})
+
 $script:window.Add_Closed({
-    $script:closing = $true
-    $script:applyTimer.Stop()
-    $script:syncTimer.Stop()
-    $script:hintTimer.Stop()
-    try { $script:mutex.ReleaseMutex() } catch { }
+    if ($script:exiting) { Exit-Application }
 })
 
 # ---------------------------------------------------------------------
@@ -750,6 +1233,31 @@ if ($initSpeed -gt 0) {
     $script:BtnReset.IsEnabled = $false
 }
 
+# 三指拖曳初始化
+if ($script:tfdReady) {
+    $savedSensitivity = Get-AppSetting 'ThreeFingerDragSensitivity' 100
+    if ($savedSensitivity -lt 40) { $savedSensitivity = 40 }
+    if ($savedSensitivity -gt 200) { $savedSensitivity = 200 }
+    $script:SldDragSens.Value = $savedSensitivity
+    $script:TxtDragSens.Text = ($savedSensitivity / 100.0).ToString('0.0', [System.Globalization.CultureInfo]::InvariantCulture) + '×'
+    $engine = [TouchpadTuner.Helper.ThreeFingerDragEngine]
+    $engine::Sensitivity = $savedSensitivity / 100.0
+    $engine::Start() | Out-Null
+    if ((Get-AppSetting 'ThreeFingerDragEnabled' 0) -eq 1) {
+        $script:ChkThreeFinger.IsChecked = $true
+        $engine::Enabled = $true
+    } else {
+        $engine::Enabled = $false
+    }
+    $script:tfdTimer.Start()
+}
+Update-TfdStatus
+
+# 开机自启复选框
+$script:suppressAutoStartEvent = $true
+$script:ChkAutoStart.IsChecked = Test-AutoStart
+$script:suppressAutoStartEvent = $false
+
 Update-MouseLabel
 $script:window.Add_Loaded({
     if ($script:currentNative -ge 1) {
@@ -757,4 +1265,30 @@ $script:window.Add_Loaded({
     }
 })
 
-[void]$script:window.ShowDialog()
+# 托盘图标（关闭窗口后程序仍后台运行）
+Initialize-TrayIcon
+try { $script:tfdTimer.Start() } catch { }
+
+if ($Background) {
+    $script:window.ShowInTaskbar = $false
+    $script:window.Hide()
+    if ($script:notifyIcon) {
+        try {
+            $script:notifyIcon.ShowBalloonTip(2500, '触摸板调速器',
+                '已进入后台运行，三指拖曳随时可用。双击托盘图标可打开窗口。',
+                [System.Windows.Forms.ToolTipIcon]::Info)
+        } catch { }
+    }
+} else {
+    $script:window.Show()
+    try { $script:window.Activate() } catch { }
+}
+
+[System.Windows.Threading.Dispatcher]::Run()
+
+# 调度器退出后的清理
+if ($script:notifyIcon) {
+    try { $script:notifyIcon.Visible = $false; $script:notifyIcon.Dispose() } catch { }
+    $script:notifyIcon = $null
+}
+try { $script:mutex.ReleaseMutex() } catch { }

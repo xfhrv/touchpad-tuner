@@ -17,7 +17,7 @@ namespace TouchpadTunerLauncher
         }
 
         [STAThread]
-        private static void Main()
+        private static void Main(string[] args)
         {
             try
             {
@@ -26,7 +26,7 @@ namespace TouchpadTunerLauncher
                 if (!File.Exists(script))
                 {
                     MessageBox.Show(
-                        "找不到 TouchpadTuner.ps1。\n请把 TouchpadTuner.exe 与 TouchpadTuner.ps1、app.ico 放在同一个文件夹中。",
+                        "找不到 TouchpadTuner.ps1。\n请把 TouchpadTuner.exe 与 TouchpadTuner.ps1、TouchpadTuner.Helper.dll、app.ico 放在同一个文件夹中。",
                         "触摸板调速器", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
@@ -42,9 +42,15 @@ namespace TouchpadTunerLauncher
                     return;
                 }
 
+                string arguments = "-NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\"";
+                if (args != null && args.Length > 0)
+                {
+                    arguments += " " + string.Join(" ", args);
+                }
+
                 ProcessStartInfo psi = new ProcessStartInfo();
                 psi.FileName = powershell;
-                psi.Arguments = "-NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\"";
+                psi.Arguments = arguments;
                 psi.WorkingDirectory = dir;
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;

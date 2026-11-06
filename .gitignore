@@ -1,5 +1,6 @@
-# Build output (the prebuilt launcher is distributed via GitHub Releases)
+# Build output (the prebuilt binaries are distributed via GitHub Releases)
 TouchpadTuner.exe
+TouchpadTuner.Helper.dll
 *.zip
 
 # Windows / editor noise
