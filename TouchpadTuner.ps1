@@ -510,7 +510,7 @@ $xaml = @'
       <Button x:Name="BtnSettings" Grid.Column="0" Content="打开 Windows 触摸板设置"
               Style="{StaticResource LinkButton}" HorizontalAlignment="Left" VerticalAlignment="Center"/>
       <Button x:Name="BtnClose" Grid.Column="1" Content="隐藏到托盘"
-              ToolTip="关闭窗口后程序仍在后台运行，三指拖曳可继续使用。右键托盘图标可退出。"
+              ToolTip="关闭窗口=隐藏到托盘，三指拖曳继续可用。右键托盘图标可选择「退出界面（后台继续）」或「完全退出」。"
               Style="{StaticResource SecondaryButton}" Height="36" MinWidth="88" VerticalAlignment="Center"/>
     </Grid>
   </Grid>
@@ -576,6 +576,7 @@ $script:closing = $false
 $script:exiting = $false
 $script:exitInProgress = $false
 $script:suppressAutoStartEvent = $false
+$script:silentBackground = $false
 $script:notifyIcon = $null
 $script:trayTfdItem = $null
 
@@ -849,6 +850,8 @@ function Invoke-GestureMigration {
 function Show-MainWindow {
     if (-not $script:window) { return }
     try {
+        $script:silentBackground = $false
+        if ($script:notifyIcon) { $script:notifyIcon.Visible = $true }
         $script:window.ShowInTaskbar = $true
         $script:window.Show()
         $script:window.WindowState = [System.Windows.WindowState]::Normal
@@ -900,6 +903,17 @@ function Exit-Application {
     try { [System.Windows.Threading.Dispatcher]::CurrentDispatcher.InvokeShutdown() } catch { }
 }
 
+function Enter-SilentBackground {
+    # Hide the window and the tray icon, but keep the engine running so that
+    # three-finger drag keeps working. Double-clicking TouchpadTuner.exe later
+    # brings the window and the tray icon back.
+    $script:silentBackground = $true
+    try { $script:window.Hide() } catch { }
+    if ($script:notifyIcon) {
+        try { $script:notifyIcon.Visible = $false } catch { }
+    }
+}
+
 function Initialize-TrayIcon {
     $ni = New-Object System.Windows.Forms.NotifyIcon
     try {
@@ -925,7 +939,11 @@ function Initialize-TrayIcon {
     [void]$menu.Items.Add($itemTfd)
     [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 
-    $itemExit = New-Object System.Windows.Forms.ToolStripMenuItem('退出')
+    $itemSilent = New-Object System.Windows.Forms.ToolStripMenuItem('退出界面（三指拖曳继续后台运行）')
+    $itemSilent.Add_Click({ Enter-SilentBackground })
+    [void]$menu.Items.Add($itemSilent)
+
+    $itemExit = New-Object System.Windows.Forms.ToolStripMenuItem('完全退出（停止三指拖曳）')
     $itemExit.Add_Click({ Exit-Application })
     [void]$menu.Items.Add($itemExit)
 
@@ -1060,7 +1078,7 @@ $script:tfdTimer.Add_Tick({
     if ($script:trayTfdItem) {
         try { $script:trayTfdItem.Checked = ($script:ChkThreeFinger.IsChecked -eq $true) } catch { }
     }
-    if ($script:notifyIcon) {
+    if ($script:notifyIcon -and -not $script:silentBackground) {
         try {
             if ($script:ChkThreeFinger.IsChecked -eq $true) { $script:notifyIcon.Text = '触摸板调速器 · 三指拖曳已开启' }
             else { $script:notifyIcon.Text = '触摸板调速器 · 三指拖曳已关闭' }
@@ -1257,6 +1275,7 @@ Update-TfdStatus
 $script:suppressAutoStartEvent = $true
 $script:ChkAutoStart.IsChecked = Test-AutoStart
 $script:suppressAutoStartEvent = $false
+$script:silentBackground = $false
 
 Update-MouseLabel
 $script:window.Add_Loaded({

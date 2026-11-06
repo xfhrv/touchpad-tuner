@@ -23,7 +23,7 @@
 - **Touchpad-only speed control:** changes the Precision Touchpad cursor speed; the mouse pointer speed is left completely untouched (the footer shows the current mouse speed, and it never changes).
 - **Slider + numeric input:** pick a multiplier from `0.50×` to `2.50×`, or type it and press Enter. Applies instantly.
 - **macOS-style three-finger drag:** hold three fingers on the touchpad and move them to drag windows or select text. A sensitivity slider controls the drag speed.
-- **Runs in the background:** closing the main window keeps the program alive in the system tray, so three-finger drag keeps working. Double-click the tray icon to reopen the window.
+- **Runs in the background:** closing the main window keeps the program alive in the system tray, so three-finger drag keeps working. Double-click the tray icon to reopen the window. The tray menu also lets you **exit the UI while keeping three-finger drag running** (no window, no tray icon — relaunch the app from the desktop shortcut to get the UI back).
 - **Start with Windows (optional):** one checkbox to auto-start the tool in the background at login, so three-finger drag is always available.
 - **One-click gesture migration:** Windows uses three-finger swipes for app switching / Task View / Show Desktop. The tool can move those actions to four-finger gestures (three-finger swipe → *Nothing*, four-finger swipe → *Switch apps and show desktop*) so the three-finger drag does not conflict.
 - **Nothing invasive:** no kernel driver, no admin rights, no background service, no network access.
@@ -36,7 +36,7 @@
 
 ### Install
 
-1. Open the [Releases](../../releases) page and download `TouchpadTuner-v1.1.0-windows.zip`.
+1. Open the [Releases](../../releases) page and download `TouchpadTuner-v1.1.1-windows.zip`.
 2. Extract the zip anywhere (e.g. `Desktop\TouchpadTuner`).
 3. Keep these files together: `TouchpadTuner.exe`, `TouchpadTuner.ps1`, `TouchpadTuner.Helper.dll`, `app.ico`.
 4. Double-click `TouchpadTuner.exe`.
@@ -102,7 +102,8 @@ Implementation note: the public `TOUCHPAD_PARAMETERS` structure only exists in t
 - **The window takes a moment to appear.** The UI runs on PowerShell + WPF; the first launch takes about 1–2 seconds.
 - **Nothing happens when I double-click the exe.** Make sure all four files are in the same folder. Some security software may block PowerShell scripts; allow the folder or review the source.
 - **Three-finger drag does not start.** Make sure the switch is on and that the touchpad is a Precision Touchpad. Also click the gesture-migration button once, otherwise Windows' own three-finger gestures may intercept the swipes.
-- **Does three-finger drag work after closing the window?** Yes — closing hides the app to the system tray. To exit completely, right-click the tray icon → 退出.
+- **Does three-finger drag work after closing the window?** Yes — closing hides the app to the system tray. To exit the UI while keeping the drag running, right-click the tray icon → **退出界面（三指拖曳继续后台运行）**; relaunch the shortcut to return. Use **完全退出（停止三指拖曳）** to fully stop the tool.
+- **Why can't it keep working after a full exit?** Three-finger drag must read touchpad input and synthesize mouse events, which requires a small background process. "Completely exit" terminates it; use the background exit option or the auto-start checkbox if you want it always available.
 - **How do I uninstall it?** Right-click the tray icon → 退出; delete the folder and the desktop shortcut. Nothing is installed, registered or auto-started (uncheck auto-start first if you enabled it).
 
 ### Build
@@ -126,7 +127,7 @@ This project is licensed under the **GNU General Public License v3.0 only** (`GP
 - **只改触摸板速度**：调节精密触摸板的光标速度，鼠标指针速度完全不动（窗口底部实时显示鼠标速度，始终不变）。
 - **滑块 + 数字倍率**：`0.50×` 到 `2.50×`，可拖滑块，也可输入倍率后回车，立即生效。
 - **macOS 风格三指拖曳**：三根手指按住触摸板并移动，即可拖动窗口、选中文字；拖曳速度可用滑块调节。
-- **后台常驻**：关闭主窗口不会退出程序，而是隐藏到系统托盘，三指拖曳继续可用；双击托盘图标重新打开窗口。
+- **后台常驻**：关闭主窗口不会退出程序，而是隐藏到系统托盘，三指拖曳继续可用；双击托盘图标重新打开窗口。托盘菜单还支持「**退出界面（三指拖曳继续后台运行）**」——界面和托盘图标都消失，但拖曳功能保留；双击桌面快捷方式即可恢复界面。
 - **开机自启（可选）**：勾选「开机自动启动」后，登录 Windows 时自动在后台启动，三指拖曳随时可用。
 - **一键手势迁移**：Windows 默认用三指手势切换应用 / 任务视图 / 显示桌面。工具可把这三指动作移到四指（三指手势 → 无，四指手势 → 切换应用并显示桌面），避免和三指拖曳冲突。
 - **无侵入**：不装驱动、不需要管理员权限、无后台服务、不联网。
@@ -139,7 +140,7 @@ This project is licensed under the **GNU General Public License v3.0 only** (`GP
 
 ### 安装
 
-1. 打开 [Releases](../../releases) 页面，下载 `TouchpadTuner-v1.1.0-windows.zip`。
+1. 打开 [Releases](../../releases) 页面，下载 `TouchpadTuner-v1.1.1-windows.zip`。
 2. 解压到任意文件夹（例如 `桌面\TouchpadTuner`）。
 3. 保持这些文件在同一目录：`TouchpadTuner.exe`、`TouchpadTuner.ps1`、`TouchpadTuner.Helper.dll`、`app.ico`。
 4. 双击 `TouchpadTuner.exe` 即可。
@@ -205,7 +206,8 @@ HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad\Cu
 - **窗口出现得有点慢？** 界面由 PowerShell + WPF 启动，首次启动约 1–2 秒。
 - **双击 exe 没反应？** 确认四个文件在同一文件夹；部分安全软件会拦截 PowerShell 脚本，可放行该目录或查看源码。
 - **三指拖曳不触发？** 确认开关已打开、触摸板是精密触摸板；并点一次「一键迁移手势」，否则 Windows 自带的三指手势会抢走滑动。
-- **关掉窗口后三指拖曳还能用吗？** 可以——关闭只是隐藏到托盘。要彻底退出：右键托盘图标 → 退出。
+- **关掉窗口后三指拖曳还能用吗？** 可以——关闭只是隐藏到托盘。想「退出界面但保留拖曳」：右键托盘图标 → **退出界面（三指拖曳继续后台运行）**，之后双击快捷方式即可恢复；想彻底停止：**完全退出（停止三指拖曳）**。
+- **为什么完全退出后拖曳就不能用了？** 三指拖曳需要读取触摸板输入并模拟鼠标事件，必须有一个很小的后台进程；「完全退出」会结束它。想随时可用，请用后台退出选项或勾选开机自启。
 - **如何卸载？** 右键托盘图标 → 退出；删除文件夹和桌面快捷方式即可。程序不安装、不注册服务（如果勾了开机自启，先取消勾选）。
 
 ### 构建
